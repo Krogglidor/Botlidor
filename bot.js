@@ -2,6 +2,7 @@ const Discord = require("discord.js");
 const config = require("./config.json");
 const snoo = require("snoowrap");
 const sql = require("sqlite");
+const fs = require('fs') 
 //requirements
 
 const bot = new Discord.Client();
@@ -29,19 +30,23 @@ bot.on("ready", () =>
     });
     bot.guilds.forEach( function(guild) //make sure there's a settings and a disabled for each guild
     {
-        sql.get(`SELECT * FROM disabled_cmd WHERE guild = "${guild.id}"`).then(row =>
+        sql.get(`SELECT * FROM "F_${guild.id}"`).then(row => {}).catch(() =>
+        {
+            sql.run(`CREATE TABLE IF NOT EXISTS "F_${guild.id}" (user TEXT, place TEXT)`);
+        });
+        sql.get(`SELECT * FROM disabled WHERE guild = "${guild.id}"`).then(row =>
         {
             if (!row)
             {
-                sql.run(`INSERT INTO disabled_cmd (guild, like, ping, setconfig, getconfig, nick, reminders, roll, conversion, help, incorrectCommands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [guild.id, "false", "false", "false", "false", "false", "false", "false", "false", "false", "false"]);
+                sql.run(`INSERT INTO disabled (guild, likes, flirt, ping, setconfig, getconfig, nick, reminders, roll, conversion, help, incorrectCommands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [guild.id, "false", "false", "false", "false", "false", "false", "false", "false", "false", "false", "false"]);
             }
         }).catch(() =>
         {
-            sql.run("CREATE TABLE IF NOT EXISTS disabled_cmd (guild TEXT, like TEXT, ping TEXT, setconfig TEXT, getconfig TEXT, nick TEXT, reminders TEXT, roll TEXT, conversion TEXT, help TEXT, incorrectCommands TEXT)").then(() =>
+            sql.run("CREATE TABLE IF NOT EXISTS disabled (guild TEXT, likes TEXT, ping TEXT, setconfig TEXT, getconfig TEXT, nick TEXT, reminders TEXT, roll TEXT, conversion TEXT, help TEXT, incorrectCommands TEXT, flirt TEXT)").then(() =>
             {
-                sql.run(`INSERT INTO disabled_cmd (guild, like, ping, setconfig, getconfig, nick, reminders, roll, conversion, help, incorrectCommands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [guild.id, "false", "false", "false", "false", "false", "false", "false", "false", "false", "false"]);
+                sql.run(`INSERT INTO disabled (guild, likes, flirt, ping, setconfig, getconfig, nick, reminders, roll, conversion, help, incorrectCommands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [guild.id, "false", "false", "false", "false", "false", "false", "false", "false", "false", "false", "false"]);
             });
         });
         sql.get(`SELECT * FROM g_config WHERE guild = "${guild.id}"`).then(row =>
@@ -68,10 +73,21 @@ bot.on("error", console.error);
 
 bot.on("guildCreate", (guild) =>
 {
-    sql.run(`INSERT INTO disabled_cmd (guild, like, ping, setconfig, getconfig, nick, reminders, roll, conversion, help, incorrectCommands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql.run(`INSERT INTO disabled (guild, likes, flirt, ping, setconfig, getconfig, nick, reminders, roll, conversion, help, incorrectCommands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [guild.id, "false", "false", "false", "false", "false", "false", "false", "false", "false", "false"]);
     sql.run(`INSERT INTO g_config (guild, prefix, modLog, modRole, adminRole, wChannel, wMessage) VALUES (?, ?, ?, ?, ?, ?, ?)`,
                     [guild.id, ".", "mod-log", "Moderator", "Administratot", "welcome", "Everyone welcome <new> to the server"]);
+});
+
+bot.on("guildDelete", (guild) =>
+{
+    sql.run(`DROP TABLE "${guild.id}"`);
+    sql.run(`DROP TABLE "${B_guild.id}"`);
+    sql.run(`DROP TABLE "${F_guild.id}"`);
+    sql.run(`DELETE FROM disabled WHERE guild = "${guild.id}"`);
+    sql.run(`DELETE FROM g_config WHERE guild = "${guild.id}"`);
+    sql.run(`DELETE FROM pending_messages WHERE guild = "${guild.id}"`);
+    return;
 });
 
 bot.on("guildMemberAdd", (member) =>
@@ -96,6 +112,8 @@ bot.on("guildMemberRemove", (member) =>
         if (mLog.memberPermissions(member.guild.me).has(["SEND_MESSAGES", "VIEW_CHANNEL"]))
             return mLog.send(member.displayName + " has left or been kicked!");
     });
+    sql.run(`DELETE FROM pending_messages WHERE user = "${member.id}"`);
+    sql.run(`DELETE FROM "F_${member.guild.id}" WHERE user = "${member.id}"`);
     return;
 });
 
@@ -106,19 +124,20 @@ bot.on("messageDelete", (message) =>
         const mLog = message.guild.channels.find(channel => {return gconfig.modLog == channel.name;});
         if (!mLog) return;
         if (mLog.memberPermissions(message.guild.me).has(["SEND_MESSAGES", "VIEW_CHANNEL"]))
-            return mLog.send("Message deleted:\n" + message.author.username + ": " + message.content, {disableEveryone: true});
+            return mLog.send("Message deleted:\n#" + message.channel.name + " " + message.member.displayName + ": " + message.cleanContent, {disableEveryone: true});
     });
     return;
 });
 
 bot.on("messageUpdate", (oldMessage, newMessage) =>
 {
+    if(newMessage.embeds.length != oldMessage.embeds.length) return;
     sql.get(`SELECT * FROM g_config WHERE guild = "${oldMessage.guild.id}"`).then(gconfig =>
     {
         const mLog = oldMessage.guild.channels.find(channel => {return gconfig.modLog == channel.name;});
         if (!mLog) return;
         if (mLog.memberPermissions(oldMessage.guild.me).has(["SEND_MESSAGES", "VIEW_CHANNEL"]))
-            return mLog.send("Message Edited:\n" + oldMessage.author.username + ": " + oldMessage.content + "\n" + newMessage.author.username + ": " + newMessage.content, {disableEveryone: true});
+            return mLog.send("Message Edited:\n#" + oldMessage.channel.name + " " + oldMessage.member.displayName + ": " + oldMessage.cleanContent + "\n#" + newMessage.channel.name + " " + newMessage.member.displayName + ": " + newMessage.cleanContent, {disableEveryone: true});
     });
     return;
 });
@@ -147,17 +166,49 @@ bot.on("guildBanRemove", (guild, user) =>
     return;
 });
 
+bot.on("guildMemberUpdate", (old, newu) =>
+{
+    sql.get(`SELECT * FROM g_config WHERE guild = "${newu.guild.id}"`).then(gconfig =>
+    {
+        const mLog = newu.guild.channels.find(channel => {return gconfig.modLog == channel.name;});
+        if ((newu.displayName.includes('\u5350') || newu.displayName.includes('\u534D') || newu.displayName.toLowerCase().includes("nazi")) && newu.guild.me.hasPermission("MANAGE_NICKNAMES") && newu.nickname  && newu.manageable)
+        {
+            newu.setNickname("", "Disallowed nick");
+            if (!mLog) return;
+            if (mLog.memberPermissions(newu.guild.me).has(["SEND_MESSAGES", "VIEW_CHANNEL"]))
+            {
+                mLog.send(old.displayname + "'s nickname has been reset for using a disallowed nick: " + newu.displayName);
+            }
+        }
+        if (!mLog) return;
+        if (mLog.memberPermissions(newu.guild.me).has(["SEND_MESSAGES", "VIEW_CHANNEL"]))
+        {
+            if (old.displayName != newu.displayName)
+                mLog.send(newu.user.username + "'s nickname has been changed from " + old.displayName + " to " + newu.displayName + ".");
+            else if (old.roles.size != newu.roles.size)
+                if (old.roles.size > newu.roles.size)
+                    mLog.send(newu.user.username + " has had the role " + old.roles.array().filter(x => !newu.roles.array().includes(x)) + " removed from them.");
+                else
+                    mLog.send(newu.user.username + " has had the role " + newu.roles.array().filter(x => !old.roles.array().includes(x)) + " added to them.");
+        }
+        else return;
+    });
+    return;
+});
+
 bot.on("message", async (message) =>
 {
-    if (!message.guild || message.author.bot) return;
+    sql.get(`SELECT * FROM "B_${message.guild.id}" WHERE ID = "${message.author.id}"`).then(blacklist =>
+    {
+    if (!message.guild || message.author.bot || blacklist) return;
     sql.get(`SELECT * FROM g_config WHERE guild = "${message.guild.id}"`).then(gconfig =>
     {
-        sql.get(`SELECT * FROM disabled_cmd WHERE guild = ${message.guild.id}`).then(disabled =>
+        sql.get(`SELECT * FROM disabled WHERE guild = ${message.guild.id}`).then(disabled =>
         {
             if (message.content.endsWith("--"))
             {
-                if (disabled.like == "true") return;
-                const like = message.content.slice(0, -2).trim();
+                if (disabled.likes == "true") return;
+                const like = message.content.slice(0, -2).trim().replace("<@!", "<@");
                 sql.get(`SELECT * FROM "${message.guild.id}" WHERE like = "${like.toLowerCase()}"`).then(row => {
                     if (!row) {
                         sql.run(`INSERT INTO "${message.guild.id}" (like, plus, minus) VALUES (?, ?, ?)`, [like.toLowerCase(), 0, -1]).then(() =>
@@ -188,8 +239,8 @@ bot.on("message", async (message) =>
             }
             else if (message.content.endsWith('\u2014')) //ios replaces -- with an em dash because it's dumb.
             {
-                if (disabled.like == "true") return;
-                const like = message.content.slice(0, -1).trim();
+                if (disabled.likes == "true") return;
+                const like = message.content.slice(0, -1).trim().replace("<@!", "<@");
                 sql.get(`SELECT * FROM "${message.guild.id}" WHERE like = "${like.toLowerCase()}"`).then(row =>
                 {
                     if (!row)
@@ -221,8 +272,8 @@ bot.on("message", async (message) =>
             }
             else if (message.content.endsWith("++"))
             {
-                if (disabled.like == "true") return;
-                const like = message.content.slice(0, -2).trim();
+                if (disabled.likes == "true") return;
+                const like = message.content.slice(0, -2).trim().replace("<@!", "<@");
                 sql.get(`SELECT * FROM "${message.guild.id}" WHERE like = "${like.toLowerCase()}"`).then(row =>
                 {
                     if (!row)
@@ -233,7 +284,8 @@ bot.on("message", async (message) =>
                                 message.channel.send("\"" + like + "\" Has 1 likes. [1, 0]", {disableEveryone: true});
                         });
                     }
-                    else {
+                    else
+                    {
                         sql.run(`UPDATE "${message.guild.id}" SET plus = ${row.plus + 1} WHERE like = "${like.toLowerCase()}"`).then(() =>
                         {
                             if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) message.channel.send("\"" + like + "\" Has " +
@@ -272,6 +324,161 @@ bot.on("message", async (message) =>
                                 return message.channel.send("Incorrect Command.");
                                 return;
                             }
+                        }
+                        return;
+                    }
+                    case "blacklist":
+                    {
+                        if (message.deletable) message.delete();
+                        const mod = message.guild.roles.find(role => {return gconfig.modRole == role.name;});
+                        const admin = message.guild.roles.find(role => {return gconfig.adminRole == role.name;});
+                        if (!mod) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply(`${gconfig.modRole} role not found.`, {disableEveryone: true}); return;}
+                        if (!admin) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply(`${gconfig.adminRole} role not found.`, {disableEveryone: true}); return;}
+                        if (!message.member.roles.some(role => [mod.id, admin.id].includes(role.id)) && message.member.id != config.owner)
+                            return message.reply("This is a mod command.");
+                        if (args[0] == null) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply("Please input member to blacklist."); return;}
+                        const ID = message.guild.members.find(member => {return (member.displayName.toLowerCase().includes(args[0].toLowerCase()) || args[0].replace(/<@!|<@|>/g, "") == member.id)});
+                        if (ID == null) return message.reply(args[0] + " did not return to a user.");
+                        if (ID.id == config.owner)
+                        {
+                            if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                return message.reply("You can not blacklist the owner.");
+                            return;
+                        }
+                        if (message.guild.members.find(member => {return ID.id == member.id}).roles.some(role => [admin.id].includes(role.id)) && message.member.id != config.owner)
+                        {
+                            if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                return message.reply("You can not blacklist an administrator.");
+                            return;
+                        }
+                        if (message.guild.members.find(member => {return ID.id == member.id}).roles.some(role => [mod.id].includes(role.id)) && !(message.member.roles.some(role => [admin.id].includes(role.id)) || message.member.id == config.owner))
+                        {
+                            if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                return message.reply("You can not blacklist a moderator.");
+                            return;
+                        }
+                        sql.get(`SELECT * FROM "B_${message.guild.id}" WHERE ID = "${ID.id}"`).then(row =>
+                        {
+                            if (!row)
+                                sql.run(`INSERT INTO "B_${message.guild.id}" (ID) VALUES (?)`, [ID.id]).then(() =>
+                                {
+                                    if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                        return message.reply(args[0] + " has been blacklisted.");
+                                    return;
+                                });
+                            else return message.reply(args[0] + " has already been blacklisted.");  
+                        });
+                        return;
+                    }
+                    case "whitelist":
+                    {
+                        if (message.deletable) message.delete();
+                        const mod = message.guild.roles.find(role => {return gconfig.modRole == role.name;});
+                        const admin = message.guild.roles.find(role => {return gconfig.adminRole == role.name;});
+                        if (!mod) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply(`${gconfig.modRole} role not found.`, {disableEveryone: true}); return;}
+                        if (!admin) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply(`${gconfig.adminRole} role not found.`, {disableEveryone: true}); return;}
+                        if (!message.member.roles.some(role => [mod.id, admin.id].includes(role.id)) && message.member.id != config.owner)
+                            return message.reply("This is a mod command.");
+                        if (args[0] == null) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply("Please input member to remove from the blacklist."); return;}
+                        const ID = message.guild.members.find(member => {return (member.displayName.toLowerCase().includes(args[0].toLowerCase()) || args[0].replace(/<@!|<@|>/g, "") == member.id);});
+                        if (ID == null) return message.reply(args[0] + " did not return to a user.");
+                        if (message.guild.members.find(member => {return ID.id == member.id}).roles.some(role => [admin.id].includes(role.id)) && message.member.id != config.owner)
+                        {
+                            if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                return message.reply("You can not remove an administrator from the blacklist.");
+                            return;
+                        }
+                        if (message.guild.members.find(member => {return ID.id == member.id}).roles.some(role => [mod.id].includes(role.id)) && !(message.member.roles.some(role => [admin.id].includes(role.id)) || message.member.id == config.owner))
+                        {
+                            if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                return message.reply("You can not remove a moderator from the blacklist.");
+                            return;
+                        }
+                        sql.get(`SELECT * FROM "B_${message.guild.id}" WHERE ID = "${ID.id}"`).then(row =>
+                        {
+                            if (!row) return message.reply(args[0] + " has not been blacklisted.");
+                            else 
+                                sql.run(`DELETE FROM "B_${message.guild.id}" WHERE ID = "${ID.id}"`).then(() =>
+                                {
+                                    if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                        return message.reply(args[0] + " has been removed from the blacklist.");
+                                    return;
+                                });
+                                
+                        });
+                        return;
+                    }
+                    case "from":
+                    {
+                        if (args[0] == null) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.channel.send("Please use \`from set <place>\` to set where you are from or \`from <person or place>\` to list where that person is from or people from that place."); return;}
+                        if (args[0] == "set")
+                        {
+                            if (!args[1]) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                return message.channel.send("Please insert where you are from."); return;}
+                            sql.get(`SELECT * FROM "F_${message.guild.id}" WHERE user = "${message.author.id}"`).then(row =>
+                            {
+                                if (!row)
+                                {
+                                    sql.run(`INSERT INTO "F_${message.guild.id}" (user, place) VALUES (?, ?)`, [message.author.id, message.content.slice(gconfig.prefix.length + 9).toLowerCase()]).then(() =>
+                                    {
+                                        if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) 
+                                            return message.reply("Your location has been set to \`" + message.content.slice(gconfig.prefix.length + 9) + "\`.", {disableEveryone: true});
+                                    });
+                                }
+                                else
+                                {
+                                    sql.run(`UPDATE "F_${message.guild.id}" SET place = "${message.content.slice(gconfig.prefix.length + 9).toLowerCase()}" WHERE user = "${message.author.id}"`).then(() =>
+                                    {
+                                        if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) 
+                                            return message.reply("Your location has been updated to \`" + message.content.slice(gconfig.prefix.length + 9) + "\`.", {disableEveryone: true});
+                                    });
+                                }
+                            });
+                        }
+                        else
+                        {
+                            const ID = message.guild.members.find(member => {return args[0].replace(/<@!|<@|>/g, "") == member.id;});
+                            if (!ID)
+                                sql.all(`SELECT * FROM "F_${message.guild.id}" WHERE place = "${message.content.slice(gconfig.prefix.length + 5).toLowerCase()}"`).then(rows =>
+                                {
+                                    if (rows[0] == null)
+                                    {
+                                        if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) 
+                                            return message.reply("No one has set themselves to be in \`" + message.content.slice(gconfig.prefix.length + 5) + "\`", {disableEveryone: true});
+                                    }
+                                    else
+                                    {
+                                        msg = "The following people are from \`" + message.content.slice(gconfig.prefix.length + 5) + "\`:\n\`\`\`";
+                                        rows.forEach( function(row)
+                                        {
+                                            msg += message.guild.members.find(member => {return row.user == member.id}).displayName + ", ";
+                                        });
+                                        msg = msg.slice(0, -2) + ".\`\`\`";
+                                        if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                            return message.reply(msg, {disableEveryone: true});
+                                    }
+                                });
+                            else
+                                sql.get(`SELECT * FROM "F_${message.guild.id}" WHERE user = "${ID.id}"`).then(row =>
+                                {
+                                    if (!row)
+                                    {
+                                        if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) 
+                                            return message.reply(ID + " has not set where they are from.", {disableEveryone: true});
+                                    }
+                                    else
+                                    {
+                                        if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) 
+                                            return message.reply(ID + " is from \`" + row.place + "\`.", {disableEveryone: true});
+                                    }
+                                });
                         }
                         return;
                     }
@@ -319,35 +526,45 @@ bot.on("message", async (message) =>
                         {
                             if (!message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) return;
                             const amount = parseInt(args[0]);
-                            const conversion = args[1];
+                            var conversion = args[1];
+                            if (args[1] != null)
+                                conversion = conversion.toLowerCase();
                             if (isNaN(amount)) return message.reply("Please input something to convert.");
-                            if (conversion == "inches" || conversion == "inch" || args[0].endsWith("in"))
+                            if (conversion == "inches" || conversion == "inch" || args[0].toLowerCase().endsWith("in"))
                             {
                                 return message.reply(`${amount} inches is about ${Math.round(amount * 2.54 * 100)/100} centimetres.`);
                             }
-                            else if (conversion == "feet" || conversion == "foot" || args[0].endsWith("ft"))
+                            else if (conversion == "feet" || conversion == "foot" || args[0].toLowerCase().endsWith("ft"))
                             {
                                 return message.reply(`${amount} feet is about ${Math.round(amount * 0.305 * 100)/100} metres.`);
                             }
-                            else if (conversion == "yards" || conversion == "yard" || args[0].endsWith("yd"))
+                            else if (conversion == "yards" || conversion == "yard" || args[0].toLowerCase().endsWith("yd"))
                             {
                                 return message.reply(`${amount} yards is about ${Math.round(amount * 0.915 * 100)/100} metres.`);
                             }
-                            else if (conversion == "miles" || conversion == "mile" || args[0].endsWith("mi"))
+                            else if (conversion == "miles" || conversion == "mile" || args[0].toLowerCase().endsWith("mi"))
                             {
                                 return message.reply(`${amount} miles is about ${Math.round(amount * 1.61 * 100)/100} kilometres.`);
                             }
-                            else if (conversion == "ounces" || conversion == "ounce" || args[0].endsWith("oz"))
+                            else if (conversion == "ounces" || conversion == "ounce" || args[0].toLowerCase().endsWith("oz"))
                             {
                                 return message.reply(`${amount} ounces is about ${Math.round(amount * 28.35 * 100)/100} grams.`);
                             }
-                            else if (conversion == "pounds" || conversion == "pound" || args[0].endsWith("lb"))
+                            else if (conversion == "pounds" || conversion == "pound" || args[0].toLowerCase().endsWith("lb"))
                             {
                                 return message.reply(`${amount} pounds is about ${Math.round(amount * 0.454 * 100)/100} kilograms.`);
                             }
-                            else if (conversion == "fahrenheit" || args[0].endsWith("f"))
+                            else if (conversion == "fahrenheit" || args[0].toLowerCase().endsWith("f"))
                             {
                                 return message.reply(`${amount} fahrenheit is about ${Math.round((amount - 32) * 5 / 9 * 100)/100} celsius.`);
+                            }
+                            else if (conversion == "psi" || args[0].toLowerCase().endsWith("psi"))
+                            {
+                                return message.reply(`${amount} psi is about ${Math.round(amount * 0.069 * 100)/100} bar.`)
+                            }
+                            else if (conversion == "gallons" || conversion == "gallon" || args[0].toLowerCase().endsWith("gal"))
+                            {
+                                return message.reply(`${amount} gallons is about ${Math.round(amount * 3.785 * 100)/100} litres.`)
                             }
                         }
                         else
@@ -367,35 +584,45 @@ bot.on("message", async (message) =>
                         {
                             if (!message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) return;
                             const amount = parseInt(args[0]);
-                            const conversion = args[1];
+                            var conversion = args[1];
+                            if (args[1] != null)
+                                conversion = conversion.toLowerCase();
                             if (isNaN(amount)) return message.reply("Please input something to convert.");
-                            if (conversion == "millimeters" || conversion == "millimeter" || conversion == "millimetres" || conversion == "millimetre" || args[0].endsWith("mm"))
+                            if (conversion == "millimeters" || conversion == "millimeter" || conversion == "millimetres" || conversion == "millimetre" || args[0].toLowerCase().endsWith("mm"))
                             {
                                 return message.reply(`${amount} millimetres is about ${Math.round(amount * 0.039 * 100)/100} inches.`);
                             }
-                            if (conversion == "centimeters" || conversion == "centimeter" || conversion == "centimetres" || conversion == "centimetre" || args[0].endsWith("cm"))
+                            if (conversion == "centimeters" || conversion == "centimeter" || conversion == "centimetres" || conversion == "centimetre" || args[0].toLowerCase().endsWith("cm"))
                             {
                                 return message.reply(`${amount} centimetres is about ${Math.round(amount * 0.394 * 100)/100} inches.`);
                             }
-                            else if (conversion == "kilometers" || conversion == "kilometer" || conversion == "kilometres" || conversion == "kilometre" || args[0].endsWith("km"))
+                            else if (conversion == "kilometers" || conversion == "kilometer" || conversion == "kilometres" || conversion == "kilometre" || args[0].toLowerCase().endsWith("km"))
                             {
                                 return message.reply(`${amount} kilometres is about ${Math.round(amount * 0.621 * 100)/100} miles.`);
                             }
-                            else if (conversion == "meters" || conversion == "meter" || conversion == "metres" || conversion == "metre" || args[0].endsWith("m"))
+                            else if (conversion == "meters" || conversion == "meter" || conversion == "metres" || conversion == "metre" || args[0].toLowerCase().endsWith("m"))
                             {
                                 return message.reply(`${amount} metres is about ${Math.round(amount * 3.28 * 100)/100} feet.`);
                             }
-                            else if (conversion == "kilograms" || conversion == "kilogram" || args[0].endsWith("kg"))
+                            else if (conversion == "kilograms" || conversion == "kilogram" || args[0].toLowerCase().endsWith("kg"))
                             {
                                 return message.reply(`${amount} kilograms is about ${Math.round(amount * 2.204 * 100)/100} pounds.`);
                             }
-                            else if (conversion == "grams" || conversion == "gram" || args[0].endsWith("g"))
+                            else if (conversion == "grams" || conversion == "gram" || args[0].toLowerCase().endsWith("g"))
                             {
                                 return message.reply(`${amount} grams is about ${Math.round(amount * 0.035 * 100)/100} ounces.`);
                             }
-                            else if (conversion == "celsius" || args[0].endsWith("c"))
+                            else if (conversion == "celsius" || args[0].toLowerCase().endsWith("c"))
                             {
                                 return message.reply(`${amount} celsius is about ${Math.round(((amount * 9 / 5) + 32) * 100)/100} fahrenheit.`);
+                            }
+                            else if (conversion == "bar" || args[0].toLowerCase().endsWith("bar"))
+                            {
+                                return message.reply(`${amount} bar is about ${Math.round(amount * 14.504 * 100)/100} psi`)
+                            }
+                            else if (conversion == "litres" || conversion == "liters" || conversion == "litre" || conversion == "liter" || args[0].toLowerCase().endsWith("L"))
+                            {
+                                return message.reply(`${amount} litres is about ${Math.round(amount * 0.264 * 100)/100} gallons.`)
                             }
                             else
                             {
@@ -418,7 +645,7 @@ bot.on("message", async (message) =>
                     case "likes":
                     {
                         if (!message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) return;
-                        if (disabled.like != "true")
+                        if (disabled.likes != "true")
                         {
                             const like = args.join(' ').trim();
                             sql.get(`SELECT * FROM "${message.guild.id}" WHERE like = "${like}"`).then(row =>
@@ -458,6 +685,22 @@ bot.on("message", async (message) =>
                         }
                         return;
                     }
+                    case "echo":
+                    case "say":
+                    {
+                        if (message.deletable) message.delete();
+                        const mod = message.guild.roles.find(role => {return gconfig.modRole == role.name;});
+                        const admin = message.guild.roles.find(role => {return gconfig.adminRole == role.name;});
+                        if (!mod) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply(`${gconfig.modRole} role not found.`, {disableEveryone: true}); return;}
+                        if (!admin) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                            return message.reply(`${gconfig.adminRole} role not found.`, {disableEveryone: true}); return;}
+                        if (!message.member.roles.some(role => [mod.id, admin.id].includes(role.id)) && message.member.id != config.owner)
+                            return message.reply("This is a mod command.");
+                        if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES") && args[0] != null)
+                            return message.channel.send(message.content.slice(gconfig.prefix.length + cmd.length + 1));
+                        return;
+                    }
                     case "setdisabled":
                     {
                         if (message.deletable) message.delete();
@@ -474,7 +717,7 @@ bot.on("message", async (message) =>
                             return message.reply("Please input config to change."); return;}
                         if (disabled[prop] == null) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
                             return message.reply(`${prop} is not in the config.`, {disableEveryone: true}); return;}
-                        sql.run(`UPDATE disabled_cmd SET ${prop} = "${value}" WHERE guild = "${message.guild.id}"`)
+                        sql.run(`UPDATE disabled SET ${prop} = "${value}" WHERE guild = "${message.guild.id}"`)
                         if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
                             return message.channel.send(`Command ${prop} disabled has been changed to: \`${value}\``);
                         return;
@@ -494,7 +737,7 @@ bot.on("message", async (message) =>
                             return message.reply("Please input config to change."); return;}
                         if (disabled[args[0]] == null) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
                             return message.reply(`${args[0]} is not in the config.`, {disableEveryone: true}); return;}
-                        sql.run(`UPDATE disabled_cmd SET ${args[0]} = "true" WHERE guild = "${message.guild.id}"`)
+                        sql.run(`UPDATE disabled SET ${args[0]} = "true" WHERE guild = "${message.guild.id}"`)
                         if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
                             return message.channel.send(`Command ${args[0]} has been \`disabled\`.`);
                     }
@@ -513,7 +756,7 @@ bot.on("message", async (message) =>
                             return message.reply("Please input config to change."); return;}
                         if (disabled[args[0]] == null) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
                             return message.reply(`${args[0]} is not in the config.`, {disableEveryone: true}); return;}
-                        sql.run(`UPDATE disabled_cmd SET ${args[0]} = "false" WHERE guild = "${message.guild.id}"`)
+                        sql.run(`UPDATE disabled SET ${args[0]} = "false" WHERE guild = "${message.guild.id}"`)
                         if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
                             return message.channel.send(`Command ${args[0]} has been \`enabled\`.`);
                     }
@@ -587,6 +830,11 @@ bot.on("message", async (message) =>
                         if (disabled.getconfig != "true")
                         {
                             if (message.deletable) message.delete();
+                            const admin = message.guild.roles.find(role => {return gconfig.adminRole == role.name;});
+                            if (!admin) {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES"))
+                                return message.reply(`${gconfig.adminRole} role not found.`, {disableEveryone: true}); return;}
+                            if (!(message.member.roles.has(admin.id)  || message.member.id == config.owner))
+                                {if (message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) return message.reply("This is an admin command."); return;}
                             let configProps = Object.keys(gconfig).map(prop => { return `\n${prop} : ${gconfig[prop]}`; });
                             return message.channel.send(`The following are the server's current configuration: \`\`\`${configProps.slice(1)}\`\`\``);
                         }
@@ -598,6 +846,31 @@ bot.on("message", async (message) =>
                                 if (message.deletable) message.delete();
                                 return message.channel.send("Incorrect Command.");
                             }
+                        }
+                        return;
+                    }
+                    case "flirt":
+                    {
+                        if (disabled.flirt == "true") return;
+                        if (args[0] == null)
+                        fs.readFile('flirt.txt', (err, data) =>
+                        {
+                            if(err) throw err;
+                            data += '';
+                            const lines = data.split('\n');
+                            return message.channel.send(lines[Math.floor(Math.random()*lines.length)]);
+                        });
+                        else
+                        {
+                            const ID = message.guild.members.find(member => {return (member.displayName.toLowerCase().includes(args[0].toLowerCase()) || args[0].replace(/<@!|<@|>/g, "") == member.id);});
+                            fs.readFile('flirt.txt', (err, data) =>
+                            {
+                                if(err) throw err;
+                                data += '';
+                                const lines = data.split('\n');
+                                if (ID) return message.channel.send(ID + ", " + lines[Math.floor(Math.random()*lines.length)]);
+                                else return message.channel.send(lines[Math.floor(Math.random()*lines.length)]);
+                            });
                         }
                         return;
                     }
@@ -697,7 +970,7 @@ bot.on("message", async (message) =>
                     }
                     case "roasted":
                     {
-                        if (!message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES")) return;
+                        if (!message.channel.memberPermissions(message.guild.me).has("SEND_MESSAGES") || !args[0]) return;
                         const roast = message.guild.members.find(user => {return args[0].slice(2, -1).replace("!", "") == user.id;});
                         if (!roast) return message.channel.send("Who would you like to see roasted stats on?");
                         const synonyms = ["roasted", "ruined", "wrecked", "rekt", "shitstomped", "fucked up"];
@@ -766,6 +1039,13 @@ bot.on("message", async (message) =>
                         if (message.deletable) message.delete();
                         if (message.channel.memberPermissions(message.guild.me).has("MANAGE_NICKNAMES") && message.guild.members.find(user => {return args[0].slice(2, -1).replace("!", "") == user.id;}).manageable)
                                 return message.guild.members.find(user => {return args[0].slice(2, -1).replace("!", "") == user.id;}).setNickname(args.slice(1).join(' '));
+                        return;
+                    }
+                    case "eval":
+                    {
+                        if (message.member.id != config.owner) return;
+                        if (message.deletable) message.delete();
+                        message.reply(args);
                         return;
                     }
                     case "in":
@@ -892,27 +1172,28 @@ bot.on("message", async (message) =>
                                 if (!mod) return message.reply(`${gconfig.modRole} role not found.`, {disableEveryone: true});
                                 if (!admin) return message.reply(`${gconfig.adminRole} role not found.`, {disableEveryone: true});
                                 var msg = "\`\`\`Available commands are:\nEveryone: ";
-                                if (disabled.like != "true") msg = msg + "likes, points, ";
+                                if (disabled.likes != "true") msg = msg + "likes, points, ";
                                 if (disabled.ping != "true") msg = msg + "ping, ";
                                 if (disabled.reminders != "true") msg = msg + "in, remindme, ";
-                                if (disabled.getconfig != "true") msg = msg + "getconfig, showconfig, ";
                                 if (disabled.conversion != "true") msg = msg + "convert, communist, metric, freedom, imperial, ";
                                 if (disabled.roll != "true") msg = msg + "roll, ";
-                                msg = msg + "roasted, help.";
+                                if (disabled.flirt != "true") msg = msg + "flirt, ";
+                                msg = msg + "from, roasted, help.";
                                 if (message.member.roles.some(role => [mod.id, admin.id].includes(role.id) || message.member.id == config.owner))
                                 {
-                                    msg = msg + "\nMod: ";
+                                    msg = msg + "\nMod: blacklist, whitelist, ";
                                     if (disabled.nick != "true") msg = msg + "nick, ";
-                                    msg = msg + "roast, unroast, setdisabled, getdisabled, showdisabled, disable, enable.";
+                                    msg = msg + "say, echo, roast, unroast, setdisabled, getdisabled, showdisabled, disable, enable.";
                                 }
                                 if (message.member.roles.has(admin.id) || message.member.id == config.owner)
                                 {
-                                    msg = msg + "\nAdmin: ";
+                                    msg = msg + "\nAdmin: blacklist (admin level), whitelist (admin level), ";
+                                    if (disabled.getconfig != "true") msg = msg + "getconfig, showconfig, ";
                                     if (disabled.setconfig != "true") msg = msg + "setconfig.";
                                 }
                                 if (message.member.id == config.owner)
                                 {
-                                    msg = msg + "\nOwner: logout.";
+                                    msg = msg + "\nOwner: blacklist (owner level), whitelist (owner level), logout.";
 
                                 }
                                 return message.channel.send(msg + "\`\`\`");
@@ -934,11 +1215,15 @@ bot.on("message", async (message) =>
                                 }
                                 else if(help == "getconfig" || help == "showconfig")
                                 {
-                                    return message.channel.send("Shows the guild's configuration.");
+                                    return message.channel.send("Shows the guild's configuration. Note, this is an ADMIN command.");
                                 }
                                 else if(help == "convert")
                                 {
                                     return message.channel.send("\`convert <amount>[SI] [unit]\`\nConverts <amount> from [SI] or [unit] to another unit. Accepts inches, feet, yards, miles, millimetres, centimetres, metres, kilometres, ounces, pounds, grams, kilograms, fahrenheit, and celsius.");
+                                }
+                                else if (help == "from")
+                                {
+                                    return message.channel.send("\`from [set] <place>\`\n sets or returns people from <place>. To set where you are from [set] must be included otherwise returns anyone from <place>, <place> can be replaced with a user ping to find where that specific user is.");
                                 }
                                 else if(help == "communist" || help == "metric")
                                 {
@@ -992,6 +1277,22 @@ bot.on("message", async (message) =>
                                 {
                                     return message.channel.send("\`setconfig <config> <value>\`\nSets <config> to <value>. Note, this is an ADMIN command.");
                                 }
+                                else if(help == "say" || help == "echo")
+                                {
+                                    return message.channel.send("\`say <string>\`, \`echo <string>\`\nThe bot will say <string> to the channel. Note, this is a MOD command.")
+                                }
+                                else if(help == "flirt")
+                                {
+                                    return message.channel.send("\`flirt <name/ping/ID>\`\nThe bot will flirt with <name/ping/ID>. Note, if you use a name it is best to use the beginning of the name since this will take the first person alphabetically with that matching string.")
+                                }
+                                else if(help == "blacklist")
+                                {
+                                    return message.channel.send("\`blacklist <name/ping/ID>\`\nThe bot will ignore commands from <name/ping/ID>. Note, if you use a name it is best to use the beginning of the name since this will take the first person alphabetically with that matching string. Note, this is a MOD/ADMIN/OWNER command. ADMINs can blacklist MODs, the owner can blacklist whoever the fuck he wants cause it's his bot.")
+                                }
+                                else if(help == "whitelist")
+                                {
+                                    return message.channel.send("\`whitelist <name/ping/ID>\`\nThe bot will no longer ignore commands from <name/ping/ID>. Note, if you use a name it is best to use the beginning of the name since this will take the first person alphabetically with that matching string. Note, this is a MOD/ADMIN/OWNER command. ADMINs can whitelist MODs, the owner can whitelist whoever the fuck he wants cause it's his bot.")
+                                }
                                 else if(help == "logout")
                                 {
                                     return message.channel.send("This logs the bot off of discord. Note, you can't use this command so why are you looking at the help for it?");
@@ -1029,5 +1330,9 @@ bot.on("message", async (message) =>
             }
             else return;
         });
+    });
+    }).catch(() =>
+    {
+        sql.run(`CREATE TABLE IF NOT EXISTS "B_${message.guild.id}" (ID TEXT)`)
     });
 });
